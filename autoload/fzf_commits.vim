@@ -8,6 +8,13 @@ let s:format = shellescape(
       \)
 let s:color_regex = '\e\[[0-9;]\+m'
 
+let s:commit_keybindings = {}
+for [s:action, s:value] in items(g:fzf_commit_actions)
+  let s:keymap = s:value['keymap']
+  if !empty(s:keymap)
+    let s:commit_keybindings[s:keymap] = s:action
+  endif
+endfor
 
 let s:branch_keybindings = {}
 for [s:action, s:value] in items(g:fzf_branch_actions)
@@ -25,8 +32,8 @@ for [s:action, s:value] in items(g:fzf_tag_actions)
   endif
 endfor
 
-let s:actions = {'tag': g:fzf_tag_actions, 'branch': g:fzf_branch_actions}
-let s:keybindings = {'tag': s:tag_keybindings, 'branch': s:branch_keybindings}
+let s:actions = {'commit': g:fzf_commit_actions, 'tag': g:fzf_tag_actions, 'branch': g:fzf_branch_actions}
+let s:keybindings = {'commit': s:commit_keybindings, 'tag': s:tag_keybindings, 'branch': s:branch_keybindings}
 let s:branch_filters = {
       \ '--all': '--all',
       \ '--locals': '',
@@ -69,7 +76,7 @@ function! s:execute(type, action, lines) abort
 
   let l:required = l:actions[l:action]['required']
 
-  let l:branch_required = index(l:required, 'branch') >= 0 || index(l:required, 'tag') >= 0
+  let l:branch_required = index(l:required, 'branch') >= 0 || index(l:required, 'tag') >= 0 || index(l:required, 'commit') >= 0
   if l:branch_required && empty(l:branch)
     call s:warning('A ' . a:type . ' is required')
     return
@@ -93,13 +100,14 @@ function! s:execute(type, action, lines) abort
 
   let l:Execute_command = l:actions[l:action]['execute']
   if type(l:Execute_command) == v:t_string
-    let l:Execute_command = substitute(l:Execute_command, '{git}', g:fzf_checkout_git_bin, 'g')
+    let l:Execute_command = substitute(l:Execute_command, '{git}', g:fzf_commits_git_bin, 'g')
+    let l:Execute_command = substitute(l:Execute_command, '{commit}', l:branch, 'g')
     let l:Execute_command = substitute(l:Execute_command, '{branch}', l:branch, 'g')
     let l:Execute_command = substitute(l:Execute_command, '{tag}', l:branch, 'g')
     let l:Execute_command = substitute(l:Execute_command, '{input}', l:input, 'g')
     execute l:Execute_command
   elseif type(l:Execute_command) == v:t_func
-    call l:Execute_command(g:fzf_checkout_git_bin, l:branch, l:input)
+    call l:Execute_command(g:fzf_commits_git_bin, l:branch, l:input)
   endif
 
 endfunction
@@ -140,7 +148,7 @@ function! s:remove_branch(branches, pattern) abort
 endfunction
 
 
-function! fzf_checkout#list(bang, type, options, deprecated) abort
+function! fzf_commits#list(bang, type, options, deprecated) abort
   let l:actions = s:actions[a:type]
   let l:options = split(a:options)
   let l:action = ''
@@ -183,6 +191,10 @@ function! fzf_checkout#list(bang, type, options, deprecated) abort
     if a:deprecated
       call s:warning('The :GCheckoutTag command is deprecated, use :GTags instead')
     endif
+  elseif a:type ==# 'commit'
+    let l:name = 'GCommits'
+    let l:prompt = 'Commits> '
+    let l:subcommand = 'log --oneline'
   else
     return
   endif
@@ -198,11 +210,10 @@ function! fzf_checkout#list(bang, type, options, deprecated) abort
     let l:prompt = l:actions[l:action]['prompt']
   endif
 
-  let l:git_cmd = printf('%s %s --color=always --sort=refname:short --format=%s %s',
-        \ g:fzf_checkout_git_bin,
+  let l:git_cmd = printf('%s %s %s',
+        \ g:fzf_commits_git_bin,
         \ l:subcommand,
-        \ s:format,
-        \ g:fzf_checkout_git_options
+        \ g:fzf_commits_git_options
         \)
 
   let l:git_output = system(l:git_cmd)
@@ -219,7 +230,7 @@ function! fzf_checkout#list(bang, type, options, deprecated) abort
   call s:remove_branch(l:git_output, escape(l:current, '/'))
   call s:remove_branch(l:git_output, '\(origin/\)\?HEAD')
 
-  if g:fzf_checkout_previous_ref_first
+  if g:fzf_commits_previous_ref_first
     " Put previous ref first
     let l:previous = s:get_previous_ref()
     if !empty(l:previous)
@@ -251,7 +262,18 @@ function! fzf_checkout#list(bang, type, options, deprecated) abort
 endfunction
 
 
-function! fzf_checkout#complete_tags(arglead, cmdline, cursorpos) abort
+function! fzf_commits#complete_commits(arglead, cmdline, cursorpos) abort
+  let l:cmdlist = split(a:cmdline)
+  if len(l:cmdlist) > 2 || len(l:cmdlist) > 1 && empty(a:arglead)
+    return ''
+  endif
+
+  let l:options = keys(g:fzf_commit_actions)
+  return join(l:options, "\n")
+endfunction
+
+
+function! fzf_commits#complete_tags(arglead, cmdline, cursorpos) abort
   let l:cmdlist = split(a:cmdline)
   if len(l:cmdlist) > 2 || len(l:cmdlist) > 1 && empty(a:arglead)
     return ''
@@ -262,7 +284,7 @@ function! fzf_checkout#complete_tags(arglead, cmdline, cursorpos) abort
 endfunction
 
 
-function! fzf_checkout#complete_branches(arglead, cmdline, cursorpos) abort
+function! fzf_commits#complete_branches(arglead, cmdline, cursorpos) abort
   let l:cmdlist = split(a:cmdline)
   if len(l:cmdlist) > 3 || len(l:cmdlist) > 2 && empty(a:arglead)
     return ''
